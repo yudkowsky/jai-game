@@ -1,6 +1,4 @@
-#import "Basic";
-#import "Math";
-Ray :: #import,dir "lib/raylib";
+#import "Basic"; #import "Math"; Ray :: #import,dir "lib/raylib";
 
 Arena :: struct
 {
@@ -80,34 +78,29 @@ sign :: (value: $T) -> T
     return 0;
 }
 
-check_collision :: (a: Rect, b: Rect, out_normal: *Vector2 = null, out_overlap: *float = null) -> bool
+check_collision :: (a: Rect, b: Rect) -> bool
 {
-    overlap_x: float;
-    overlap_y: float;
+    overlap_x := false;
+    overlap_y := false;
 
-    if a.top_left.x + a.extent.x > b.top_left.x && b.top_left.x + b.extent.x > a.top_left.x
-    {
-        overlap_x = a.top_left.x - b.top_left.x;
-    }
-    if a.top_left.y + a.extent.y > b.top_left.y && b.top_left.y + b.extent.y > a.top_left.y
-    {
-        overlap_y = a.top_left.y - b.top_left.y;
-    }
+    if a.top_left.x + a.extent.x > b.top_left.x && b.top_left.x + b.extent.x > a.top_left.x  overlap_x = true;
+    if a.top_left.y + a.extent.y > b.top_left.y && b.top_left.y + b.extent.y > a.top_left.y  overlap_y = true;
 
-    if overlap_x == 0 || overlap_y == 0 return false;
+    if overlap_x && overlap_y return true;
+    else return false;
+}
 
-    if abs(overlap_x) > abs(overlap_y)
+collides_with_any_tile :: (pos: Vector2, size: Vector2, room: Room) -> bool
+{
+    rect := Rect.{ pos - (size/2), size };
+    for room.flat
     {
-        if out_normal != null  out_normal.* = Vector2.{ sign(overlap_x), 0 };
-        if out_overlap != null  out_overlap.* = abs(overlap_x);
+        if it == TileType.EMPTY continue;
+        tile_origin := Vector2.{ xx(it_index % ROOM_WIDTH), xx(it_index / ROOM_WIDTH) } * TILE_SIZE;
+        tile_rect := Rect.{ tile_origin, Vector2.{ TILE_SIZE, TILE_SIZE } };
+        if check_collision(tile_rect, rect) return true;
     }
-    else
-    {
-        if out_normal != null  out_normal.* = Vector2.{ 0, sign(overlap_y) };
-        if out_overlap != null  out_overlap.* = abs(overlap_y);
-    }
-
-    return true;
+    return false;
 }
 
 main :: ()
@@ -136,6 +129,7 @@ main :: ()
         delta_time := Ray.GetFrameTime();
 
         move_speed := 50.0;
+        guy_size :: Vector2.{ 8.0, 8.0 };
 
         move_dir : Vector2;
         if Ray.IsKeyDown(.KEY_R)  move_dir.y += 1;
@@ -144,40 +138,36 @@ main :: ()
         if Ray.IsKeyDown(.KEY_S)  move_dir.x -= 1;
         move_dir = normalize(move_dir);
 
-        guy_size :: Vector2.{ 8.0, 8.0 };
-        guy_pos += move_dir * move_speed * delta_time;
+        prev_guy_pos := guy_pos;
+        moved_guy_pos := prev_guy_pos + move_dir * move_speed * delta_time;
 
-        // collisions
+        // Collisions
+
+        // Do x movement
+        guy_pos.x = moved_guy_pos.x;
+        if collides_with_any_tile(guy_pos, guy_size, room)
+        {
+            guy_pos.x = prev_guy_pos.x;
+        }
+
+        // Do y movement
+        guy_pos.y = moved_guy_pos.y;
+        if collides_with_any_tile(guy_pos, guy_size, room)
+        {
+            guy_pos.y = prev_guy_pos.y;
+        }
+
+        // Projectile / wall collision
         for room.flat
         {
-            if it == TileType.EMPTY continue;
-
-            // Player
-            tile_origin := Vector2.{ xx(it_index % ROOM_WIDTH), xx (it_index / ROOM_WIDTH) } * TILE_SIZE;
-            tile_rect := Rect.{ tile_origin, Vector2.{ TILE_SIZE, TILE_SIZE } };
-            guy_rect := Rect.{ guy_pos - (guy_size / 2), guy_size };
-
-            normal : Vector2;
-            distance: float;
-            if check_collision(tile_rect, guy_rect, *normal, *distance)
-            {
-                if normal.x != 0
-                {
-                    guy_pos.x = tile_origin.x + (TILE_SIZE / 2) - sign(normal.x) * (TILE_SIZE / 2) - sign(normal.x) * guy_size.x / 2;
-                }
-                else if normal.y != 0
-                {
-                    guy_pos.y = tile_origin.y + (TILE_SIZE / 2) - sign(normal.y) * (TILE_SIZE / 2) - sign(normal.y) * guy_size.y / 2;
-                }
-                break;
-            }
-
             for *projectiles
             {
                 projectile_size :: Vector2.{ 6.0, 6.0 };
                 margin :: Vector2.{ 4.0, 4.0 };
 
                 rect := Rect.{ it.pos - projectile_size / 2 + margin / 2, projectile_size - margin }; 
+                tile_origin := Vector2.{ xx(it_index % ROOM_WIDTH), xx(it_index / ROOM_WIDTH) } * TILE_SIZE;
+                tile_rect := Rect.{ tile_origin, Vector2.{ TILE_SIZE, TILE_SIZE } };
                 if check_collision(rect, tile_rect)
                 {
                     it.is_alive = false;
