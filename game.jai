@@ -1,4 +1,9 @@
-#import "Basic"; #import "Math"; Ray :: #import,dir "lib/raylib";
+#import "Basic";
+#import "Math";
+
+Input :: #import "Input";
+#import "Window_Creation"; 
+Simp :: #import,dir "lib/Simp";
 
 Arena :: struct
 {
@@ -59,16 +64,18 @@ arena_push :: (arena: *Arena, size: s64) -> *void
     return return_pointer;
 }
 
-draw_sprite :: (sprite: Ray.Texture2D, pos: Vector2, origin := Vector2.{ 0.5, 0.5 })
+draw_sprite :: (sprite: Simp.Texture, pos: Vector2, origin := Vector2.{ 0.5, 0.5 })
 {
-    width : float = cast(float) sprite.width;
-    height : float = cast(float) sprite.height;
+    half_width: float = cast(float) sprite.width / 2;
+    half_height: float = cast(float) sprite.height / 2;
 
-    Ray.DrawTexturePro(
-        sprite,
-        Ray.Rectangle.{ 0, 0, width, height },
-        Ray.Rectangle.{ pos.x, pos.y, width, height },
-        Vector2.{ width * origin.x, height * origin.y }, 0, Ray.WHITE );
+    top_left     := pos + Vector2.{ -half_width, -half_height };
+    top_right    := pos + Vector2.{  half_width, -half_height };
+    bottom_right := pos + Vector2.{  half_width,  half_height };
+    bottom_left  := pos + Vector2.{ -half_width,  half_height };
+
+    Simp.set_shader_for_images(*sprite);
+    Simp.immediate_quad(top_left, top_right, bottom_right, bottom_left);
 }
 
 sign :: (value: $T) -> T
@@ -105,37 +112,69 @@ collides_with_any_tile :: (pos: Vector2, size: Vector2, room: Room) -> bool
 
 main :: ()
 {
+    prev_time := seconds_since_init();
+
 	perm_arena := make_arena(2048);
 
 	room: Room;
 	projectiles: [32] Projectile;
 
-    Ray.InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Window window");
-
-    projectile_sprite := Ray.LoadTexture("data/sprites/projectile.png");
-	guy_sprite := Ray.LoadTexture("data/sprites/guy.png");
-	wall_sprite := Ray.LoadTexture("data/sprites/wall.png");
-
-    render_target : Ray.RenderTexture2D = Ray.LoadRenderTexture(WIDTH, HEIGHT);
-
+    move_speed :: 50.0;
+    guy_size :: Vector2.{ 8.0, 8.0 };
 	guy_pos := Vector2.{ WIDTH / 2.0, HEIGHT / 2.0 };
+
     shoot_cooldown := 0.0;
 
+
+    prev_user_input: [512] bool;
+    user_input: [512] bool;
+
+    window := create_window(WINDOW_WIDTH, WINDOW_HEIGHT, "window simp");
+
+    projectile_sprite: Simp.Texture;
+    guy_sprite: Simp.Texture;
+    wall_sprite: Simp.Texture;
+
+    Simp.set_render_target(window);
+
+    assert(Simp.texture_load_from_file(*projectile_sprite, "data/sprites/projectile.png"));
+    assert(Simp.texture_load_from_file(*guy_sprite, "data/sprites/guy.png"));
+    assert(Simp.texture_load_from_file(*wall_sprite, "data/sprites/wall.png"));
+
+    render_target := Simp.texture_create_render_target(WIDTH, HEIGHT, .RGBA8);
+
     quit := false;
-    while !Ray.WindowShouldClose() && !quit
-    {
-		if Ray.IsKeyDown(.KEY_ESCAPE) break;
+    while !quit {
+        memset(*user_input, 0, size_of(type_of(user_input)));
 
-        delta_time := Ray.GetFrameTime();
+        Input.update_window_events();
 
-        move_speed := 50.0;
-        guy_size :: Vector2.{ 8.0, 8.0 };
+        for Input.events_this_frame {
+            if it.type == {
+              case .QUIT;
+                quit = true;
+            }
+        }
+
+        for Input.input_button_states {
+            if it & .DOWN {
+                user_input[it_index] = true;
+            }
+        }
+
+        time := seconds_since_init();
+        delta_time := cast(float)(time - prev_time);
+        prev_time = time;
+
+        if user_input[Input.Key_Code.ESCAPE] break;
 
         move_dir : Vector2;
-        if Ray.IsKeyDown(.KEY_R)  move_dir.y += 1;
-        if Ray.IsKeyDown(.KEY_L)  move_dir.y -= 1;
-        if Ray.IsKeyDown(.KEY_N)  move_dir.x += 1;
-        if Ray.IsKeyDown(.KEY_S)  move_dir.x -= 1;
+
+        if user_input[#char "R"]  move_dir.y += 1;
+        if user_input[#char "L"]  move_dir.y -= 1;
+        if user_input[#char "N"]  move_dir.x += 1;
+        if user_input[#char "S"]  move_dir.x -= 1;
+
         move_dir = normalize(move_dir);
 
         prev_guy_pos := guy_pos;
@@ -165,10 +204,10 @@ main :: ()
                 projectile_size :: Vector2.{ 6.0, 6.0 };
                 margin :: Vector2.{ 4.0, 4.0 };
 
-                rect := Rect.{ it.pos - projectile_size / 2 + margin / 2, projectile_size - margin }; 
+                projectile_rect := Rect.{ it.pos - projectile_size / 2 + margin / 2, projectile_size - margin }; 
                 tile_origin := Vector2.{ xx(it_index % ROOM_WIDTH), xx(it_index / ROOM_WIDTH) } * TILE_SIZE;
                 tile_rect := Rect.{ tile_origin, Vector2.{ TILE_SIZE, TILE_SIZE } };
-                if check_collision(rect, tile_rect)
+                if check_collision(projectile_rect, tile_rect)
                 {
                     it.is_alive = false;
                 }
@@ -190,22 +229,23 @@ main :: ()
         shoot_direction : Vector2;
         shoot_this_frame := false;
 
-        if Ray.IsKeyDown(.KEY_DOWN)
+
+        if user_input[Input.Key_Code.ARROW_DOWN]
         {
 			shoot_direction.y = 1;
             shoot_this_frame = true;
         }
-        else if Ray.IsKeyDown(.KEY_UP)
+        else if user_input[Input.Key_Code.ARROW_UP]
         {
 			shoot_direction.y = -1;
             shoot_this_frame = true;
         }
-        else if Ray.IsKeyDown(.KEY_RIGHT)
+        else if user_input[Input.Key_Code.ARROW_RIGHT]
         {
 			shoot_direction.x = 1;
             shoot_this_frame = true;
         }
-        else if Ray.IsKeyDown(.KEY_LEFT)
+        else if user_input[Input.Key_Code.ARROW_LEFT]
         {
 			shoot_direction.x = -1;
             shoot_this_frame = true;
@@ -241,18 +281,22 @@ main :: ()
 		shoot_cooldown += delta_time;
 
         // Level editor
-        mouse_pos := Ray.GetMousePosition();
-        hovered_tile_coords := Vector2.{ floor(mouse_pos.x / (TILE_SIZE * PIXEL_SIZE)), floor(mouse_pos.y / (TILE_SIZE * PIXEL_SIZE)) };
+        //mouse_pos := Ray.GetMousePosition();
+        //hovered_tile_coords := Vector2.{ floor(mouse_pos.x / (TILE_SIZE * PIXEL_SIZE)), floor(mouse_pos.y / (TILE_SIZE * PIXEL_SIZE)) };
 
+        /*
         if Ray.IsMouseButtonDown(.MOUSE_BUTTON_LEFT) room.grid[xx hovered_tile_coords.y][xx hovered_tile_coords.x] = .WALL;
         if Ray.IsMouseButtonDown(.MOUSE_BUTTON_RIGHT) room.grid[xx hovered_tile_coords.y][xx hovered_tile_coords.x] = .EMPTY;
+        */
 
 		// Render
-		Ray.BeginTextureMode(render_target);
 
-        Ray.ClearBackground(Ray.Color.{ 100, 149, 236, 255 });
+        Simp.set_render_target(*render_target, .LEFT_HANDED);
+        Simp.clear_render_target(.08, .08, .15, 1);
+        Simp.immediate_begin();
 
         draw_sprite(guy_sprite, guy_pos);
+
         for projectiles 
         {
             if !it.is_alive continue;
@@ -265,21 +309,29 @@ main :: ()
             draw_sprite(wall_sprite, Vector2.{ xx(it_index % ROOM_WIDTH), xx (it_index / ROOM_WIDTH) } * TILE_SIZE, Vector2.{ 0, 0 });
         }
 
+/*
         if !Ray.IsMouseButtonDown(.MOUSE_BUTTON_RIGHT)
         {
             draw_sprite(wall_sprite, Vector2.{ xx hovered_tile_coords.x, xx hovered_tile_coords.y } * TILE_SIZE, Vector2.{ 0, 0 });
         }
+        */
 
-        Ray.EndTextureMode();
+        Simp.immediate_flush();
 
-		Ray.BeginDrawing();
+        Simp.set_render_target(window, .LEFT_HANDED);
+        Simp.immediate_begin();
 
-		Ray.DrawTexturePro(
-        	render_target.texture,
-        	Ray.Rectangle.{ 0, 0, cast(float) render_target.texture.width, cast(float) -render_target.texture.height },
-            Ray.Rectangle.{ 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT },
-            Vector2.{ 0, 0 }, 0, Ray.WHITE );
+        draw_sprite(render_target, Vector2.{ WINDOW_WIDTH, WINDOW_HEIGHT }, Vector2.{ 0, 0 });
 
-        Ray.EndDrawing();
+        top_left     := Vector2.{ 0, 0 };
+        top_right    := Vector2.{ WINDOW_WIDTH, 0 };
+        bottom_right := Vector2.{ WINDOW_WIDTH, WINDOW_HEIGHT };
+        bottom_left  := Vector2.{ 0, WINDOW_HEIGHT };
+
+        Simp.set_shader_for_images(*render_target);
+        Simp.immediate_quad(top_left, top_right, bottom_right, bottom_left);
+
+        Simp.immediate_flush();
+        Simp.swap_buffers(window);
     } 
 }
